@@ -1,6 +1,6 @@
 {
   "name": "state-reactor",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Efficient state management and reactive programming with an API inspired by React Hooks, designed for a variety of applications.",
   "repository": {
     "type": "git",
