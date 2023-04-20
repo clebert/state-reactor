@@ -15,7 +15,8 @@
     "lib"
   ],
   "scripts": {
-    "ci": "run-p compile:check compile:emit format:check lint test",
+    "preci": "run-s compile:emit",
+    "ci": "run-p compile:check format:check lint test",
     "postci": "size-limit",
     "compile:check": "tsc",
     "compile:emit": "tsc --project tsconfig.emit.json",
