@@ -400,10 +400,20 @@ describe(`StateReactor`, () => {
     });
 
     it(`triggers effects only once when multiple tracked states change simultaneously`, async () => {
+      expect.assertions(8);
+
       const [getState1, setState1] = reactor.useState(0);
       const [getState2, setState2] = reactor.useState(`a`);
 
       const effect = jest.fn<Effect>(() => {
+        if (effect.mock.calls.length === 1) {
+          expect(getState1()).toBe(0);
+          expect(getState2()).toBe(`a`);
+        } else {
+          expect(getState1()).toBe(3);
+          expect(getState2()).toBe(`c`);
+        }
+
         getState1();
         getState2();
       });
@@ -424,6 +434,39 @@ describe(`StateReactor`, () => {
       setState2(`c`);
 
       await macrotask();
+
+      expect(effect).toBeCalledTimes(2);
+      expect(errorCallback).toHaveBeenCalledTimes(0);
+    });
+
+    it(`ensures effect execution stays within the originally scheduled microtask even when multiple tracked states change simultaneously`, async () => {
+      const [getState1, setState1] = reactor.useState(0);
+      const [getState2, setState2] = reactor.useState(`a`);
+
+      const effect = jest.fn<Effect>(() => {
+        getState1();
+        getState2();
+      });
+
+      reactor.useEffect(effect);
+      reactor.start();
+
+      expect(effect).toBeCalledTimes(0);
+
+      await macrotask();
+
+      expect(effect).toBeCalledTimes(1);
+
+      setState1(1);
+
+      const microtask = Promise.resolve();
+
+      setState1(2);
+      setState1(3);
+      setState2(`b`);
+      setState2(`c`);
+
+      await microtask;
 
       expect(effect).toBeCalledTimes(2);
     });
