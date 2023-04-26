@@ -11,7 +11,7 @@ export type ErrorCallback = (error: unknown) => void;
 
 export type Effect = () => void | Cleanup;
 export type Cleanup = () => void;
-export type Accessors<T> = [Getter<T>, Setter<T>];
+export type Accessors<T> = [Getter<T>, Setter<T>, Observer];
 export type Getter<T> = (options?: GetterOptions) => T;
 
 export interface GetterOptions {
@@ -28,6 +28,18 @@ export interface GetterOptions {
  * @throws If the reactor is currently executing an effect.
  */
 export type Setter<T> = (newState: T) => void;
+
+/**
+ * An observer function which accepts a listener function as a parameter.
+ *
+ * @param listener - A listener function to be invoked when state changes.
+ */
+export type Observer = (listener: Listener) => void;
+
+/**
+ * A listener function to be invoked when the state changes.
+ */
+export type Listener = () => void;
 
 /**
  * A class that simplifies state management and promotes reactive programming by
@@ -121,12 +133,15 @@ export class StateReactor {
    *
    * @param initialState - The initial state value.
    * @returns A tuple containing a getter function that retrieves the current
-   * state value and a setter function that updates the state value. The setter
-   * function should be called asynchronously to ensure it is not executed
-   * during the execution of an effect.
+   * state value, a setter function that updates the state value, and an
+   * observer function that registers a listener function for state changes. The
+   * setter function should be called asynchronously to ensure it is not
+   * executed during the execution of an effect.
    */
   useState<T>(initialState: T): Accessors<T> {
     let state = initialState;
+
+    const listeners = new Set<Listener>();
 
     const setter: Setter<T> = (newState) => {
       if (this.#executingEffect) {
@@ -145,6 +160,14 @@ export class StateReactor {
             this.#queueEffect(effect);
           }
         }
+
+        for (const listener of listeners) {
+          try {
+            listener();
+          } catch (error) {
+            this.#handleError(error);
+          }
+        }
       }
     };
 
@@ -156,7 +179,30 @@ export class StateReactor {
       return state;
     };
 
-    return [getter, setter];
+    const observer: Observer = (listener) => {
+      listeners.add(listener);
+    };
+
+    return [getter, setter, observer];
+  }
+
+  /**
+   * Registers a getter function and an observer function from a compatible
+   * external source to be used as part of the current reactor.
+   *
+   * @param getter - A getter function that retrieves the state value from the
+   * external source.
+   * @param observer - An observer function that registers a listener for state
+   * changes in the external source.
+   * @returns A new getter function that retrieves the current state value from
+   * the external source.
+   */
+  useExternalState<T>(getter: () => T, observer: Observer): Getter<T> {
+    const [getState, setState] = this.useState(getter());
+
+    observer(() => setState(getter()));
+
+    return getState;
   }
 
   #queueEffect(effect: Effect): void {

@@ -8,10 +8,12 @@ const macrotask = async () => new Promise(setImmediate);
 describe(`StateReactor`, () => {
   let errorCallback: jest.Mock<ErrorCallback>;
   let reactor: StateReactor;
+  let externalReactor: StateReactor;
 
   beforeEach(() => {
     errorCallback = jest.fn();
     reactor = new StateReactor(errorCallback);
+    externalReactor = new StateReactor(errorCallback);
   });
 
   describe(`start()`, () => {
@@ -299,12 +301,41 @@ describe(`StateReactor`, () => {
     });
   });
 
-  describe(`Getter`, () => {
+  describe(`useExternalState()`, () => {
+    it(`returns a getter function for getting the state of the given external reactor`, () => {
+      const [getExternalState, setExternalState, observeExternalState] =
+        externalReactor.useState(0);
+
+      const getState = reactor.useExternalState(
+        getExternalState,
+        observeExternalState,
+      );
+
+      expect(getState()).toBe(0);
+      expect(getExternalState()).toBe(0);
+
+      setExternalState(1);
+
+      expect(getState()).toBe(1);
+      expect(getExternalState()).toBe(1);
+    });
+  });
+
+  describe(`getter()`, () => {
     it(`disables state tracking within effects when called with the untracked option set to true`, async () => {
-      const [getState, setState] = reactor.useState(0);
+      const [getExternalState, setExternalState, observeExternalState] =
+        externalReactor.useState(`a`);
+
+      const [getState1, setState1] = reactor.useState(0);
+
+      const getState2 = reactor.useExternalState(
+        getExternalState,
+        observeExternalState,
+      );
 
       const effect = jest.fn<Effect>(() => {
-        getState({untracked: true});
+        getState1({untracked: true});
+        getState2({untracked: true});
       });
 
       reactor.useEffect(effect);
@@ -316,7 +347,8 @@ describe(`StateReactor`, () => {
 
       expect(effect).toBeCalledTimes(1);
 
-      setState(1);
+      setState1(1);
+      setExternalState(`b`);
 
       await macrotask();
 
@@ -364,8 +396,8 @@ describe(`StateReactor`, () => {
     });
   });
 
-  describe(`Setter`, () => {
-    it(`triggers dependent effects when the new state differs from the current state`, async () => {
+  describe(`setter()`, () => {
+    it(`triggers dependent effects when the new state differs from the current internal state`, async () => {
       const [getState, setState] = reactor.useState(0);
 
       const effect1 = jest.fn<Effect>(() => {
@@ -389,6 +421,46 @@ describe(`StateReactor`, () => {
       expect(effect2).toBeCalledTimes(1);
 
       setState(1);
+
+      expect(effect1).toBeCalledTimes(1);
+      expect(effect2).toBeCalledTimes(1);
+
+      await macrotask();
+
+      expect(effect1).toBeCalledTimes(2);
+      expect(effect2).toBeCalledTimes(2);
+    });
+
+    it(`triggers dependent effects when the new state differs from the current external state`, async () => {
+      const [getExternalState, setExternalState, observeExternalState] =
+        externalReactor.useState(0);
+
+      const getState = reactor.useExternalState(
+        getExternalState,
+        observeExternalState,
+      );
+
+      const effect1 = jest.fn<Effect>(() => {
+        getState();
+      });
+
+      const effect2 = jest.fn<Effect>(() => {
+        getState();
+      });
+
+      reactor.useEffect(effect1);
+      reactor.useEffect(effect2);
+      reactor.start();
+
+      expect(effect1).toBeCalledTimes(0);
+      expect(effect2).toBeCalledTimes(0);
+
+      await macrotask();
+
+      expect(effect1).toBeCalledTimes(1);
+      expect(effect2).toBeCalledTimes(1);
+
+      setExternalState(1);
 
       expect(effect1).toBeCalledTimes(1);
       expect(effect2).toBeCalledTimes(1);
@@ -471,7 +543,7 @@ describe(`StateReactor`, () => {
       expect(effect).toBeCalledTimes(2);
     });
 
-    it(`does not trigger effects if the new state is identical to the current state`, async () => {
+    it(`does not trigger effects if the new state is identical to the current internal state`, async () => {
       const [getState, setState] = reactor.useState(0);
 
       const effect = jest.fn<Effect>(() => {
@@ -488,6 +560,35 @@ describe(`StateReactor`, () => {
       expect(effect).toBeCalledTimes(1);
 
       setState(0);
+
+      await macrotask();
+
+      expect(effect).toBeCalledTimes(1);
+    });
+
+    it(`does not trigger effects if the new state is identical to the current external state`, async () => {
+      const [getExternalState, setExternalState, observeExternalState] =
+        externalReactor.useState(0);
+
+      const getState = reactor.useExternalState(
+        getExternalState,
+        observeExternalState,
+      );
+
+      const effect = jest.fn<Effect>(() => {
+        getState();
+      });
+
+      reactor.useEffect(effect);
+      reactor.start();
+
+      expect(effect).toBeCalledTimes(0);
+
+      await macrotask();
+
+      expect(effect).toBeCalledTimes(1);
+
+      setExternalState(0);
 
       await macrotask();
 
@@ -676,6 +777,59 @@ describe(`StateReactor`, () => {
     });
   });
 
+  describe(`observer()`, () => {
+    it(`ensures that listener functions are called only when the state actually changes`, () => {
+      const [, setState, observeState] = reactor.useState(0);
+      const listener1 = jest.fn<Cleanup>();
+      const listener2 = jest.fn<Cleanup>();
+
+      observeState(listener1);
+      observeState(listener2);
+
+      expect(listener1).toHaveBeenCalledTimes(0);
+      expect(listener2).toHaveBeenCalledTimes(0);
+
+      setState(1);
+
+      expect(listener1).toHaveBeenCalledTimes(1);
+      expect(listener2).toHaveBeenCalledTimes(1);
+
+      setState(1);
+
+      expect(listener1).toHaveBeenCalledTimes(1);
+      expect(listener2).toHaveBeenCalledTimes(1);
+
+      setState(2);
+
+      expect(listener1).toHaveBeenCalledTimes(2);
+      expect(listener2).toHaveBeenCalledTimes(2);
+    });
+
+    it(`ensures that listener functions are called only once per state change, even when registered multiple times`, () => {
+      const [, setState, observeState] = reactor.useState(0);
+      const listener1 = jest.fn<Cleanup>();
+      const listener2 = jest.fn<Cleanup>();
+
+      observeState(listener1);
+      observeState(listener1);
+      observeState(listener2);
+      observeState(listener2);
+
+      expect(listener1).toHaveBeenCalledTimes(0);
+      expect(listener2).toHaveBeenCalledTimes(0);
+
+      setState(1);
+
+      expect(listener1).toHaveBeenCalledTimes(1);
+      expect(listener2).toHaveBeenCalledTimes(1);
+
+      setState(2);
+
+      expect(listener1).toHaveBeenCalledTimes(2);
+      expect(listener2).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe(`error handling`, () => {
     it(`invokes errorCallback with error details when an error occurs in effects or cleanup functions`, async () => {
       const [getState, setState] = reactor.useState(0);
@@ -731,6 +885,24 @@ describe(`StateReactor`, () => {
       expect(errorCallback).toHaveBeenNthCalledWith(3, effectError);
     });
 
+    it(`invokes errorCallback with error details when an error occurs in listener functions`, () => {
+      const [, setState, observeState] = reactor.useState(0);
+
+      const listener = jest.fn<Cleanup>(() => {
+        throw new Error();
+      });
+
+      observeState(listener);
+
+      expect(listener).toHaveBeenCalledTimes(0);
+      expect(errorCallback).toHaveBeenCalledTimes(0);
+
+      setState(1);
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(errorCallback).toHaveBeenCalledTimes(1);
+    });
+
     it(`continues executing remaining effects and cleanup functions despite encountering errors`, async () => {
       const cleanup1 = jest.fn<Cleanup>(() => {
         throw new Error();
@@ -777,6 +949,29 @@ describe(`StateReactor`, () => {
       expect(cleanup1).toBeCalledTimes(1);
       expect(cleanup2).toBeCalledTimes(1);
       expect(errorCallback).toHaveBeenCalledTimes(2);
+    });
+
+    it(`continues executing remaining listener functions despite encountering errors`, () => {
+      const [, setState, observeState] = reactor.useState(0);
+
+      const listener1 = jest.fn<Cleanup>(() => {
+        throw new Error();
+      });
+
+      const listener2 = jest.fn<Cleanup>();
+
+      observeState(listener1);
+      observeState(listener2);
+
+      expect(listener1).toHaveBeenCalledTimes(0);
+      expect(listener2).toHaveBeenCalledTimes(0);
+      expect(errorCallback).toHaveBeenCalledTimes(0);
+
+      setState(1);
+
+      expect(listener1).toHaveBeenCalledTimes(1);
+      expect(listener2).toHaveBeenCalledTimes(1);
+      expect(errorCallback).toHaveBeenCalledTimes(1);
     });
 
     it(`ignores errors within errorCallback`, async () => {
