@@ -25,7 +25,8 @@
     "lint": "eslint .",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --silent",
     "release": "npm version",
-    "postrelease": "git push --follow-tags"
+    "postrelease": "git push --follow-tags",
+    "start": "node example.js"
   },
   "devDependencies": {
     "@jest/globals": "^29.5.0",
